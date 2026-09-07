@@ -16,10 +16,17 @@ written, not the size of the input.
     python pdfsplit.py big.pdf --parts 8            # 8 roughly equal parts
     python pdfsplit.py big.pdf --size 100           # ~100 MB per file
     python pdfsplit.py big.pdf --ranges '1-100,101-'
+    python pdfsplit.py big.pdf --notebooklm     # ~180 MB, <=450 pages per part
     python pdfsplit.py big.pdf --pages 500 --dry-run
 
 Options: `-o/--out-dir`, `--prefix`, `--password`, `--linearize`, `-q/--quiet`.
 Default output dir is `<input>_split` next to the input.
+
+## NotebookLM
+
+`--notebooklm` targets ~180 MB and at most 450 pages per part, leaving headroom
+under NotebookLM's 200 MB-per-source limit for the size estimate's error. If a
+part still comes out over 200 MB, re-run that part with a smaller `--size`.
 
 ## Notes
 

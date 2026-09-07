@@ -10,6 +10,8 @@ Modes (pick exactly one):
   --parts K     split into K roughly equal parts (by page count)
   --size MB     grow each chunk until it is about MB megabytes
   --ranges S    explicit 1-based ranges, e.g. "1-100,101-250,900-"
+  --notebooklm  preset: ~180 MB and at most 450 pages per file, sized to
+                sit under NotebookLM's 200 MB / 500-page-per-source limits
 """
 
 from __future__ import annotations
@@ -23,6 +25,11 @@ from pathlib import Path
 import pikepdf
 
 MB = 1024 * 1024
+
+# NotebookLM accepts one source up to 200 MB. Target below that so the
+# per-page size estimate can overshoot without pushing a part over the wall.
+NOTEBOOKLM_MB = 180.0
+NOTEBOOKLM_MAX_PAGES = 450
 
 
 def human(n: float) -> str:
@@ -98,14 +105,17 @@ def _page_bytes(page, seen: set[int]) -> int:
     return total
 
 
-def size_chunks(pdf: pikepdf.Pdf, target: int) -> list[tuple[int, int]]:
+def size_chunks(
+    pdf: pikepdf.Pdf, target: int, max_pages: int | None = None
+) -> list[tuple[int, int]]:
     chunks: list[tuple[int, int]] = []
     start = 0
     used = 0
     seen: set[int] = set()
     for i, page in enumerate(pdf.pages):
         cost = _page_bytes(page, seen)
-        if used and used + cost > target:
+        full = max_pages is not None and i - start >= max_pages
+        if used and (full or used + cost > target):
             chunks.append((start, i))
             start, used, seen = i, 0, set()
             cost = _page_bytes(page, seen)
@@ -163,6 +173,7 @@ def split(
     parts: int | None = None,
     size_mb: float | None = None,
     ranges: str | None = None,
+    max_pages: int | None = None,
     password: str = "",
     prefix: str | None = None,
     linearize: bool = False,
@@ -188,7 +199,7 @@ def split(
             chunks = even_chunks(total, parts)
         else:
             log("measuring pages for size-based split...")
-            chunks = size_chunks(pdf, int(size_mb * MB))
+            chunks = size_chunks(pdf, int(size_mb * MB), max_pages)
 
         stem = prefix or src_path.stem
         width = max(3, len(str(len(chunks))))
@@ -232,6 +243,9 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--size", type=float, metavar="MB",
                       help="approximate megabytes per output file")
     mode.add_argument("--ranges", help="explicit page ranges, e.g. '1-100,101-200'")
+    mode.add_argument("--notebooklm", action="store_true",
+                      help=f"preset for NotebookLM: ~{NOTEBOOKLM_MB:.0f}MB and "
+                           f"<={NOTEBOOKLM_MAX_PAGES} pages per file")
     p.add_argument("--password", default="", help="password for an encrypted PDF")
     p.add_argument("--prefix", help="output filename prefix (default: input stem)")
     p.add_argument("--linearize", action="store_true",
@@ -247,12 +261,17 @@ def main(argv: list[str] | None = None) -> int:
     if a.size is not None and a.size <= 0:
         p.error("--size must be > 0")
 
+    max_pages = None
+    if a.notebooklm:
+        a.size = NOTEBOOKLM_MB
+        max_pages = NOTEBOOKLM_MAX_PAGES
+
     out_dir = a.out_dir or a.input.with_name(a.input.stem + "_split")
     try:
         split(
             a.input, out_dir,
             pages=a.pages, parts=a.parts, size_mb=a.size, ranges=a.ranges,
-            password=a.password, prefix=a.prefix, linearize=a.linearize,
+            max_pages=max_pages, password=a.password, prefix=a.prefix, linearize=a.linearize,
             dry_run=a.dry_run, quiet=a.quiet,
         )
     except pikepdf.PasswordError:
